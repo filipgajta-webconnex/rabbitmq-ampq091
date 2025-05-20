@@ -35,6 +35,9 @@ The producer will start sending messages to RabbitMQ, which will be processed by
   - 🟡 Yellow: Messages being retried
   - 🔴 Red: Messages sent to DLQ
 
+![image](https://github.com/user-attachments/assets/dfad203d-ac4e-4dba-997c-7d78ef16798f)
+
+
 ## Stopping the System
 
 1. Stop the producer and consumer by pressing Ctrl+C in their respective terminals
