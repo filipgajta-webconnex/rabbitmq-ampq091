@@ -35,8 +35,7 @@ The producer will start sending messages to RabbitMQ, which will be processed by
   - 🟡 Yellow: Messages being retried
   - 🔴 Red: Messages sent to DLQ
 
-![image](https://github.com/user-attachments/assets/dfad203d-ac4e-4dba-997c-7d78ef16798f)
-
+<img width="2649" alt="image" src="https://github.com/user-attachments/assets/ff187bf3-ede9-48a2-9ceb-b5744cc44d0a" />
 
 ## Stopping the System
 
