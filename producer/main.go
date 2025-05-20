@@ -23,11 +23,11 @@ func main() {
 	}
 	defer ch.Close()
 
-	// Declare an exchange
+	// Declare a topic exchange
 	exchangeName := "example_exchange"
 	err = ch.ExchangeDeclare(
 		exchangeName, // name
-		"direct",     // type
+		"topic",      // type
 		true,         // durable
 		false,        // auto-deleted
 		false,        // internal

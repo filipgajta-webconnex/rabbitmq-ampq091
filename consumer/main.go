@@ -127,59 +127,6 @@ func main() {
 	}
 	defer ch.Close()
 
-	// Declare the Dead Letter Exchange (DLX)
-	err = ch.ExchangeDeclare(
-		dlxExchange, // name
-		"direct",    // type
-		true,        // durable
-		false,       // auto-deleted
-		false,       // internal
-		false,       // no-wait
-		nil,         // arguments
-	)
-	if err != nil {
-		log.Fatalf("Failed to declare DLX: %v", err)
-	}
-
-	// Declare the Dead Letter Queue (DLQ)
-	_, err = ch.QueueDeclare(
-		dlqQueue, // name
-		true,     // durable
-		false,    // delete when unused
-		false,    // exclusive
-		false,    // no-wait
-		nil,      // arguments
-	)
-	if err != nil {
-		log.Fatalf("Failed to declare DLQ: %v", err)
-	}
-
-	// Bind the DLQ to the DLX
-	err = ch.QueueBind(
-		dlqQueue,      // queue name
-		dlxRoutingKey, // routing key
-		dlxExchange,   // exchange
-		false,         // no-wait
-		nil,           // arguments
-	)
-	if err != nil {
-		log.Fatalf("Failed to bind DLQ: %v", err)
-	}
-
-	// Declare the main exchange
-	err = ch.ExchangeDeclare(
-		exchangeName, // name
-		"direct",     // type
-		true,         // durable
-		false,        // auto-deleted
-		false,        // internal
-		false,        // no-wait
-		nil,          // arguments
-	)
-	if err != nil {
-		log.Fatalf("Failed to declare exchange: %v", err)
-	}
-
 	// Declare the main queue with DLQ settings
 	args := amqp.Table{
 		"x-dead-letter-exchange":    dlxExchange,   // Dead Letter Exchange
