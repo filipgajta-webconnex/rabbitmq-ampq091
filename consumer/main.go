@@ -16,7 +16,6 @@ const (
 	queueName     = "example_queue"
 	dlxExchange   = "dlx_exchange"
 	dlxRoutingKey = "dlx_key"
-	dlqQueue      = "dlq_queue"
 )
 
 // MessageStatus represents the status of message processing
