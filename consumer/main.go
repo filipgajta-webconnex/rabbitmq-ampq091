@@ -16,7 +16,7 @@ const (
 	dlqQueue      = "dlq_queue"
 	routingKey    = "example_key"
 	dlxRoutingKey = "dlq_key"
-	queueTTL      = 6000 // ms
+	queueTTL      = 4000 // ms
 )
 
 // MessageStatus for colored output
@@ -97,6 +97,7 @@ func main() {
 		for d := range msgs {
 			timestamp := time.Now().Format("15:04:05.000")
 			message := string(d.Body)
+			time.Sleep(1 * time.Second)
 			if rand.Intn(3) == 0 {
 				d.Ack(false)
 				printMessageStatus(MessageStatus{

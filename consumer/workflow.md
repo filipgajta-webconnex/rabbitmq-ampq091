@@ -1,0 +1,1 @@
+[example_queue] --x-message-ttl/Nack--> [dlx_exchange] --dlx_key--> [dlq_queue]

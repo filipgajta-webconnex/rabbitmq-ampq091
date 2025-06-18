@@ -1,0 +1,65 @@
+┌──────────────────────────┐
+│    Main Queue            │
+│  (example_queue)         │
+│                          │
+│  - TTL configured        │
+│    (x-message-ttl)       │
+│  - Dead-letter           │
+│    (x-dead-letter-       │
+│     exchange &           │
+│     x-dead-letter-       │
+│     routing-key)         │
+└─────────┬────────────────┘
+          │
+          ▼
+┌──────────────────────────┐
+│     Consumer receives    │
+│        a message         │
+└─────────┬────────────────┘
+          │
+          ▼
+┌──────────────────────────┐
+│    rand.Intn(3) == 0 ?   │
+└───────┬───────────┬──────┘
+        │           │
+        │           │
+        ▼           ▼
+┌─────────────┐ ┌──────────────────┐
+│  ACK (OK)   │ │ NACK + requeue   │
+└─────┬───────┘ └───────┬──────────┘
+      │                 │
+  Message is            │
+   removed              │
+      │                 │
+      │             Message is
+      │              requeued 
+      │           in main queue
+      │                 │
+      └───────┬─────────┘
+              │
+              ▼
+ ┌─────────────────────────┐
+ │ If the message stays in │
+ │ main queue longer than  │
+ │ TTL:                    │
+ └─────────┬───────────────┘
+           │
+           ▼
+ ┌─────────────────────────┐
+ │   DLX Exchange          │
+ │   (dlx_exchange)        │
+ └─────────┬───────────────┘
+           │ (dlxRoutingKey)
+           ▼
+ ┌─────────────────────────┐
+ │    DLQ Queue            │
+ │    (dlq_queue)          │
+ └─────────┬───────────────┘
+           │
+           ▼
+ ┌─────────────────────────┐
+ │ Consumer processes      │
+ │ messages from the DLQ   │
+ │ (prints "TO DLQ" or     │
+ │  "EXPIRED")             │
+ └─────────────────────────┘
