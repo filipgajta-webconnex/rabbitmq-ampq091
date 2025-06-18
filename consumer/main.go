@@ -10,16 +10,20 @@ import (
 )
 
 const (
-	maxRetries    = 3
-	exchangeName  = "example_exchange"
-	routingKey    = "example_key"
-	queueName     = "example_queue"
-	dlxExchange   = "dlx_exchange"
-	dlxRoutingKey = "dlx_key"
-	dlqQueue      = "dlq_queue"
+	maxRetries      = 3
+	exchangeName    = "example_exchange"
+	retryExchange   = "retry_exchange"
+	dlxExchange     = "dlx_exchange"
+	queueName       = "example_queue"
+	retryQueue      = "retry_queue"
+	dlqQueue        = "dlq_queue"
+	routingKey      = "example_key"
+	retryRoutingKey = "retry_key"
+	dlxRoutingKey   = "dlq_key"
+	retryTTL        = 2000 // milliseconds (2 seconds)
 )
 
-// MessageStatus represents the status of message processing
+// MessageStatus for colored output
 type MessageStatus struct {
 	Timestamp  string
 	Status     string
@@ -27,38 +31,48 @@ type MessageStatus struct {
 	StatusType string // "success", "retry", "dlq"
 }
 
-// printMessageStatus prints the message status in a formatted table row
 func printMessageStatus(status MessageStatus) {
 	var colorCode string
 	switch status.StatusType {
 	case "success":
-		colorCode = "\033[32m" // green
+		colorCode = "\033[32m"
 	case "retry":
-		colorCode = "\033[33m" // yellow
+		colorCode = "\033[33m"
 	case "dlq":
-		colorCode = "\033[31m" // red
+		colorCode = "\033[31m"
+	default:
+		colorCode = "\033[0m"
 	}
-
 	fmt.Printf("│ \033[90m%-19s\033[0m │ %s%-14s\033[0m │ %-35s │\n",
-		status.Timestamp,
-		colorCode,
-		status.Status,
-		status.Message)
+		status.Timestamp, colorCode, status.Status, status.Message)
 	fmt.Printf("├─────────────────────┼────────────────┼─────────────────────────────────────┤\n")
 }
 
-// handleMessage processes a single message and returns its status
-func handleMessage(ch *amqp.Channel, d amqp.Delivery) MessageStatus {
+func getRetryCount(headers amqp.Table) int64 {
+	if headers == nil {
+		return 0
+	}
+	xDeath, ok := headers["x-death"].([]interface{})
+	if !ok || len(xDeath) == 0 {
+		return 0
+	}
+	deathInfo, ok := xDeath[0].(amqp.Table)
+	if !ok {
+		return 0
+	}
+	count, ok := deathInfo["count"].(int64)
+	if !ok {
+		return 0
+	}
+	return count
+}
+
+func handleMessage(d amqp.Delivery) MessageStatus {
 	timestamp := time.Now().Format("15:04:05.000")
 	message := string(d.Body)
+	retryCount := getRetryCount(d.Headers)
 
-	// Get retry count from headers or initialize it
-	headers := d.Headers
-	if headers == nil {
-		headers = make(amqp.Table)
-	}
-	retryCount, _ := headers["retry-count"].(int32)
-
+	// Simulate random failure (50% chance)
 	if rand.Intn(2) == 0 {
 		d.Ack(false)
 		return MessageStatus{
@@ -70,8 +84,8 @@ func handleMessage(ch *amqp.Channel, d amqp.Delivery) MessageStatus {
 	}
 
 	retryCount++
-	if retryCount >= maxRetries {
-		d.Nack(false, false) // Reject without requeue - will go to DLQ
+	if retryCount > maxRetries {
+		d.Nack(false, false) // Send to DLQ
 		return MessageStatus{
 			Timestamp:  timestamp,
 			Status:     "TO DLQ",
@@ -80,30 +94,7 @@ func handleMessage(ch *amqp.Channel, d amqp.Delivery) MessageStatus {
 		}
 	}
 
-	// Update retry count in headers
-	headers["retry-count"] = retryCount
-	// Republish with updated headers
-	err := ch.Publish(
-		exchangeName,
-		routingKey,
-		false,
-		false,
-		amqp.Publishing{
-			Headers:     headers,
-			Body:        d.Body,
-			ContentType: "text/plain",
-		})
-	if err != nil {
-		log.Printf("Failed to republish message: %v", err)
-		d.Nack(false, true) // Requeue on publish failure
-		return MessageStatus{
-			Timestamp:  timestamp,
-			Status:     "ERROR",
-			Message:    message,
-			StatusType: "dlq",
-		}
-	}
-	d.Ack(false)
+	d.Nack(false, false) // Trigger retry via DLX
 	return MessageStatus{
 		Timestamp:  timestamp,
 		Status:     fmt.Sprintf("RETRY %d/%d", retryCount, maxRetries),
@@ -113,83 +104,89 @@ func handleMessage(ch *amqp.Channel, d amqp.Delivery) MessageStatus {
 }
 
 func main() {
-	// Connect to RabbitMQ
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
 	if err != nil {
 		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
 	defer conn.Close()
 
-	// Open a channel
 	ch, err := conn.Channel()
 	if err != nil {
 		log.Fatalf("Failed to open a channel: %v", err)
 	}
 	defer ch.Close()
 
-	// Declare the main queue with DLQ settings
-	args := amqp.Table{
-		"x-dead-letter-exchange":    dlxExchange,   // Dead Letter Exchange
-		"x-dead-letter-routing-key": dlxRoutingKey, // Routing key for DLQ
+	// Main exchange
+	if err := ch.ExchangeDeclare(exchangeName, "topic", true, false, false, false, nil); err != nil {
+		log.Fatalf("Failed to declare main exchange: %v", err)
 	}
-	_, err = ch.QueueDeclare(
-		queueName, // name
-		true,      // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		args,      // arguments
-	)
-	if err != nil {
-		log.Fatalf("Failed to declare a queue: %v", err)
+	// Retry exchange
+	if err := ch.ExchangeDeclare(retryExchange, "topic", true, false, false, false, nil); err != nil {
+		log.Fatalf("Failed to declare retry exchange: %v", err)
+	}
+	// DLX exchange
+	if err := ch.ExchangeDeclare(dlxExchange, "topic", true, false, false, false, nil); err != nil {
+		log.Fatalf("Failed to declare DLX exchange: %v", err)
 	}
 
-	// Bind the queue to the exchange
-	err = ch.QueueBind(
-		queueName,    // queue name
-		routingKey,   // routing key
-		exchangeName, // exchange
-		false,        // no-wait
-		nil,          // arguments
-	)
+	// Main queue (dead-letters to retry exchange)
+	mainArgs := amqp.Table{
+		"x-dead-letter-exchange":    retryExchange,
+		"x-dead-letter-routing-key": retryRoutingKey,
+	}
+	_, err = ch.QueueDeclare(queueName, true, false, false, false, mainArgs)
 	if err != nil {
-		log.Fatalf("Failed to bind queue: %v", err)
+		log.Fatalf("Failed to declare main queue: %v", err)
+	}
+	if err := ch.QueueBind(queueName, routingKey, exchangeName, false, nil); err != nil {
+		log.Fatalf("Failed to bind main queue: %v", err)
 	}
 
-	// Set QoS (Quality of Service)
-	err = ch.Qos(1, 0, false) // Prefetch 1 message at a time
+	// Retry queue: TTL, then dead-letters back to main exchange
+	retryArgs := amqp.Table{
+		"x-dead-letter-exchange":    exchangeName,
+		"x-dead-letter-routing-key": routingKey,
+		"x-message-ttl":             int32(retryTTL),
+	}
+	_, err = ch.QueueDeclare(retryQueue, true, false, false, false, retryArgs)
+	if err != nil {
+		log.Fatalf("Failed to declare retry queue: %v", err)
+	}
+	if err := ch.QueueBind(retryQueue, retryRoutingKey, retryExchange, false, nil); err != nil {
+		log.Fatalf("Failed to bind retry queue: %v", err)
+	}
+
+	// DLQ: final destination for dead-lettered messages
+	_, err = ch.QueueDeclare(dlqQueue, true, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("Failed to declare DLQ: %v", err)
+	}
+	if err := ch.QueueBind(dlqQueue, dlxRoutingKey, dlxExchange, false, nil); err != nil {
+		log.Fatalf("Failed to bind DLQ: %v", err)
+	}
+
+	// Set QoS
+	err = ch.Qos(1, 0, false)
 	if err != nil {
 		log.Fatalf("Failed to set QoS: %v", err)
 	}
 
-	// Consume messages
-	msgs, err := ch.Consume(
-		queueName, // queue
-		"",        // consumer
-		false,     // auto-ack
-		false,     // exclusive
-		false,     // no-local
-		false,     // no-wait
-		nil,       // args
-	)
+	// Start consuming
+	msgs, err := ch.Consume(queueName, "", false, false, false, false, nil)
 	if err != nil {
 		log.Fatalf("Failed to register a consumer: %v", err)
 	}
 
-	// Process messages
-	forever := make(chan bool)
-
-	// Print table header
 	fmt.Printf("\n┌─────────────────────┬────────────────┬─────────────────────────────────────┐\n")
 	fmt.Printf("│ %-19s │ %-14s │ %-35s │\n", "Timestamp", "Status", "Message")
 	fmt.Printf("├─────────────────────┼────────────────┼─────────────────────────────────────┤\n")
 
 	go func() {
 		for d := range msgs {
-			status := handleMessage(ch, d)
+			status := handleMessage(d)
 			printMessageStatus(status)
 		}
 	}()
 
-	<-forever
+	select {}
 }
