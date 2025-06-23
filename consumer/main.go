@@ -107,7 +107,7 @@ func main() {
 					StatusType: "success",
 				})
 			} else {
-				// NACK y requeue=true: vuelve a la cola, si no se procesa antes de TTL va a la DLQ
+				// NACK with requeue=true: it goes back to the queue; if it’s not processed before the TTL expires, it goes to the DLQ.
 				d.Nack(false, true)
 				printMessageStatus(MessageStatus{
 					Timestamp:  timestamp,
@@ -130,7 +130,7 @@ func main() {
 				Message:    message,
 				StatusType: "dlq",
 			})
-			// Hacemos Ack para que el mensaje se borre de la DLQ tras mostrarlo
+			// We send an ACK to delete the message from the DLQ after displaying it.
 			d.Ack(false)
 		}
 	}()
